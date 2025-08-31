@@ -36,14 +36,15 @@ public class GmailWatchManager(
     private bool _disposed;
     private bool _owningWatch;
     private string? _ownedWatchId;
+    private volatile string? _currentWatchedTopic;
 
 	/// <summary>
-	/// Starts managing Gmail watch lifecycle for the specified duration.
-	/// </summary>
-	/// <param name="topicName">The Pub/Sub topic name for notifications.</param>
-	/// <param name="labelIds">Optional label IDs to filter emails.</param>
-	/// <param name="endTime">When to stop managing watches (null for indefinite).</param>
-	/// <param name="cancellationToken">Cancellation token.</param>
+    /// Starts managing Gmail watch lifecycle for the specified duration.
+    /// </summary>
+    /// <param name="topicName">The Pub/Sub topic name for notifications.</param>
+    /// <param name="labelIds">Optional label IDs to filter emails.</param>
+    /// <param name="endTime">When to stop managing watches (null for indefinite).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     public async Task StartWatchManagementAsync(
         string topicName,
         string[]? labelIds = null,
@@ -51,6 +52,13 @@ public class GmailWatchManager(
         bool enforceOwnership = false,
         CancellationToken cancellationToken = default)
     {
+        if (_currentWatchedTopic != null)
+        {
+            _logger.Warning("Gmail watch management is already active for topic '{0}'.", _currentWatchedTopic);
+            return;
+        }
+        _currentWatchedTopic = topicName;
+        
         ObjectDisposedException.ThrowIf(_disposed, nameof(GmailWatchManager));
 
         _logger.Info("Starting Gmail watch management...");
@@ -89,7 +97,7 @@ public class GmailWatchManager(
     {
         _renewalTimer?.Dispose();
         _renewalTimer = null;
-        
+
         // Cancel the watch if we own it
         if (_owningWatch && !string.IsNullOrEmpty(_ownedWatchId))
         {
@@ -120,8 +128,9 @@ public class GmailWatchManager(
         {
             _logger.Debug("Using existing watch, leaving it active.");
         }
-        
+
         _logger.Info("Gmail watch management stopped.");
+        _currentWatchedTopic = null;
     }
 
     /// <summary>

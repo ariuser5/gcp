@@ -4,17 +4,12 @@ using DCiuve.Gcp.Mailflow.Services;
 using DCiuve.Gcp.PubSub;
 using DCiuve.Shared.Logging;
 
-namespace DCiuve.Gcp.Mailflow.Cli.Services;
+namespace DCiuve.Gcp.Mailflow.PubSub;
 
 /// <summary>
 /// Manages Gmail watch lifecycle including creation, renewal, and expiration handling.
 /// </summary>
-[Obsolete("Use DCiuve.Gcp.Mailflow.Pubsub.GmailTopicWatchManager instead.")]
-public class GmailWatchManager(
-    IGmailClient gmailClient,
-    ILogger logger,
-    string applicationName
-) : IDisposable
+public class GmailTopicWatchManager : IDisposable
 {
     /// <summary>
     /// Initializes a new instance of the GmailWatchManager class.
@@ -31,13 +26,34 @@ public class GmailWatchManager(
     /// </summary>
     private const int WatchRenewalAdvanceMinutes = 15;
 
-    private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    private readonly GmailWatchBroker _watchBroker = new(gmailClient, applicationName);
+    private readonly ILogger _logger;
+    private readonly GmailWatchBroker _watchBroker;
+
+    private readonly SemaphoreSlim _watchLock = new(1, 1);
     private Timer? _renewalTimer;
     private bool _disposed;
     private bool _owningWatch;
     private string? _ownedWatchId;
     private volatile string? _currentWatchedTopic;
+    
+    public GmailTopicWatchManager(
+        IGmailClient gmailClient,
+        ILogger logger,
+        string applicationName)
+    {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _watchBroker = new GmailWatchBroker(gmailClient, applicationName);
+    }
+    
+    /// <summary>
+    /// Indicates whether the Gmail watch management is currently running.
+    /// </summary>
+    public bool IsRunning => _currentWatchedTopic != null;
+    
+    /// <summary>
+    /// Gets the active topic for the Gmail watch.
+    /// </summary>
+    public string? TopicActiveWatch => _currentWatchedTopic;
 
 	/// <summary>
     /// Starts managing Gmail watch lifecycle for the specified duration.
@@ -53,14 +69,16 @@ public class GmailWatchManager(
         bool enforceOwnership = false,
         CancellationToken cancellationToken = default)
     {
-        if (_currentWatchedTopic != null)
+        await Synchronize(() =>
         {
-            _logger.Warning("Gmail watch management is already active for topic '{0}'.", _currentWatchedTopic);
-            return;
-        }
-        _currentWatchedTopic = topicName;
-        
-        ObjectDisposedException.ThrowIf(_disposed, nameof(GmailWatchManager));
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(GmailTopicWatchManager));
+
+            if (_currentWatchedTopic != null)
+                throw new InvalidOperationException("Watch management is already active.");
+
+            _currentWatchedTopic = topicName;
+        }, cancellationToken);
 
         _logger.Info("Starting Gmail watch management...");
 
@@ -94,8 +112,9 @@ public class GmailWatchManager(
     /// Stops watch management and cleans up resources.
     /// If we own the watch, it will be cancelled.
     /// </summary>
-    public async Task StopWatchManagementAsync()
+    public async Task StopWatchManagementAsync(CancellationToken cancellationToken = default)
     {
+
         _renewalTimer?.Dispose();
         _renewalTimer = null;
 
@@ -130,8 +149,11 @@ public class GmailWatchManager(
             _logger.Debug("Using existing watch, leaving it active.");
         }
 
-        _logger.Info("Gmail watch management stopped.");
-        _currentWatchedTopic = null;
+        await Synchronize(() =>
+        {
+            _currentWatchedTopic = null;
+            _logger.Info("Gmail watch management stopped.");
+        }, cancellationToken);
     }
 
     /// <summary>
@@ -391,6 +413,24 @@ public class GmailWatchManager(
         }
     }
 
+    private async Task Synchronize(Action action, CancellationToken cancellationToken = default)
+    {
+        await _watchLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            action();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Operation was cancelled, just exit
+        }
+        finally
+        {
+            _watchLock.Release();
+        }
+    }
+
     public void Dispose()
     {
         if (!_disposed)
@@ -399,6 +439,7 @@ public class GmailWatchManager(
             _renewalTimer?.Dispose();
             _renewalTimer = null;
             _watchBroker?.Dispose();
+            _currentWatchedTopic = null;
             _disposed = true;
             _logger.Debug("Gmail watch manager disposed (sync cleanup only).");
         }

@@ -2,6 +2,7 @@ using DCiuve.Gcp.ExtensionDomain.Gmail;
 using DCiuve.Gcp.Mailflow.Cli.Commands;
 using DCiuve.Gcp.Mailflow.Cli.Services;
 using DCiuve.Gcp.Mailflow.Models;
+using DCiuve.Gcp.Mailflow.PubSub;
 using DCiuve.Gcp.Mailflow.Services;
 using DCiuve.Shared.Logging;
 
@@ -154,11 +155,11 @@ public class PullSubscriptionStrategy(
 		DateTime? endTime,
 		CancellationToken cancellationToken)
 	{
-		GmailWatchManager? watchManager = null;
+		GmailTopicWatchManager? watchManager = null;
 		try
 		{
 			var watchAppName = options.ApplicationName ?? AppDomain.CurrentDomain.FriendlyName;
-			watchManager = new GmailWatchManager(gmailClient, logger, watchAppName);
+			watchManager = new GmailTopicWatchManager(gmailClient, logger, watchAppName);
 			await watchManager.StartWatchManagementAsync(
 				topicName: topicName,
 				labelIds: labelIds,
@@ -176,7 +177,7 @@ public class PullSubscriptionStrategy(
 		{
 			if (watchManager != null)
 			{
-				await watchManager.StopWatchManagementAsync();
+				await watchManager.StopWatchManagementAsync(cancellationToken);
 				watchManager.Dispose();
 			}
 		}

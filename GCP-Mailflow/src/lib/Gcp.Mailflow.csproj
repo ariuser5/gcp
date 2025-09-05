@@ -15,7 +15,9 @@
 
   <ItemGroup>
     <PackageReference Include="Google.Cloud.PubSub.V1" Version="3.15.0" />
+    <PackageReference Include="DCiuve.Shared" Version="1.0.1" />
     <ProjectReference Include="..\..\..\GCP-PubSubPrimer\src\lib\Gcp.PubSub.csproj" />
+    <ProjectReference Include="..\..\..\GCP-Core-Shared\src\GCP.Core.Shared.csproj" />
     <ProjectReference Include="..\..\..\GCP-ExtensionDomain\src\Gcp.ExtensionDomain.csproj" />
   </ItemGroup>
 
